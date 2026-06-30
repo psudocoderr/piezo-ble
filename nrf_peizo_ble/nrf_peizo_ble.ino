@@ -9,11 +9,15 @@ BLEService bleService("ABCD1234-0000-467A-9538-01F0652C74E0");
 BLECharacteristic bleCharacteristic(
   "ABCD1234-0001-467A-9538-01F0652C74E0");
 
-// 2-byte payload
-uint8_t data[2];
+// -----------------------------------------------------------------------------
+// Packet buffer
+// 10 samples × 2 bytes = 20-byte payload
+// -----------------------------------------------------------------------------
+uint16_t sampleBuffer[10];
+uint8_t sampleIndex = 0;
 
 // -----------------------------------------------------------------------------
-// Start advertising
+// Advertising
 // -----------------------------------------------------------------------------
 void startAdvertising()
 {
@@ -29,6 +33,7 @@ void startAdvertising()
   Bluefruit.Advertising.setInterval(160, 160);      // 100 ms
   Bluefruit.Advertising.setFastTimeout(30);
   Bluefruit.Advertising.restartOnDisconnect(true);
+
   Bluefruit.Advertising.start(0);
 
   Serial.println("Advertising...");
@@ -41,7 +46,7 @@ void connect_callback(uint16_t conn_handle)
 {
   BLEConnection* connection = Bluefruit.Connection(conn_handle);
 
-  // Request lower latency
+  // Request ~7.5 ms connection interval
   connection->requestConnectionParameter(6, 0, 200);
 
   Serial.print("[t=");
@@ -59,6 +64,8 @@ void disconnect_callback(uint16_t conn_handle, uint8_t reason)
   Serial.print(millis());
   Serial.print(" ms] Disconnected. Reason=0x");
   Serial.println(reason, HEX);
+
+  sampleIndex = 0;
 }
 
 // -----------------------------------------------------------------------------
@@ -69,18 +76,20 @@ void setup()
   Serial.begin(115200);
 
   Bluefruit.begin();
+
   Bluefruit.setTxPower(4);
   Bluefruit.setName("MyBLE");
 
-  // Service
   bleService.begin();
 
-  // Characteristic
   bleCharacteristic.setProperties(CHR_PROPS_NOTIFY);
 
-  bleCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+  bleCharacteristic.setPermission(
+    SECMODE_OPEN,
+    SECMODE_NO_ACCESS);
 
-  bleCharacteristic.setFixedLen(2);
+  // 20-byte notification
+  bleCharacteristic.setFixedLen(20);
 
   bleCharacteristic.begin();
 
@@ -90,48 +99,57 @@ void setup()
   startAdvertising();
 
   Serial.println("------------------------------------");
-  Serial.println(" nRF BLE Analog Notifier");
-  Serial.println(" Device : MyBLE");
-  Serial.println(" Update : 100 ms");
+  Serial.println("nRF52840 BLE Analog Stream");
+  Serial.println("Sampling Rate : 200 Hz");
+  Serial.println("Packet Size   : 10 samples");
+  Serial.println("Payload       : 20 bytes");
   Serial.println("------------------------------------");
 }
 
 // -----------------------------------------------------------------------------
-// Loop
+// Main Loop
 // -----------------------------------------------------------------------------
 void loop()
 {
-  static uint32_t lastUpdate = 0;
+  static uint32_t lastSample = 0;
 
-  if (millis() - lastUpdate >= 50)
+  // Sample every 5 ms (200 Hz)
+  if (micros() - lastSample >= 5000)
   {
-    lastUpdate = millis();
+    lastSample += 5000;
 
-    uint16_t analogValue = analogRead(A0);
+    sampleBuffer[sampleIndex++] = analogRead(A0);
+    // sampleBuffer[sampleIndex++] = 7000 + sampleIndex;
 
-    data[0] = analogValue & 0xFF;
-    data[1] = analogValue >> 8;
-
-    // Send notification only if a client is connected
-    if (Bluefruit.connected())
+    // Buffer full?
+    if (sampleIndex >= 10)
     {
-      bleCharacteristic.notify(data, sizeof(data));
+      // Send one 20-byte notification
+      if (Bluefruit.connected())
+      {
+        bleCharacteristic.notify(
+          (uint8_t*)sampleBuffer,
+                                 sizeof(sampleBuffer));
+      }
+
+        //Try to get know other methods to send data and data format. Eg- Indicate, write etc.
+
+      // Debug output
+      Serial.print("[");
+      Serial.print(millis());
+      Serial.print(" ms] ");
+
+      for (int i = 0; i < 10; i++)
+      {
+        Serial.print(sampleBuffer[i]);
+
+        if (i != 9)
+          Serial.print(", ");
+      }
+
+      Serial.println();
+
+      sampleIndex = 0;
     }
-
-    // Debug output
-    Serial.print("[t=");
-    Serial.print(millis());
-    Serial.print(" ms] Analog A0 = ");
-    Serial.print(analogValue);
-
-    Serial.print(" | Notify bytes: 0x");
-
-    if (data[0] < 0x10) Serial.print('0');
-    Serial.print(data[0], HEX);
-
-    Serial.print(" 0x");
-
-    if (data[1] < 0x10) Serial.print('0');
-    Serial.println(data[1], HEX);
   }
 }
