@@ -1,104 +1,137 @@
 #include <bluefruit.h>
 #include <Adafruit_TinyUSB.h>
 
-  uint8_t data[2];
-BLEService bleService = BLEService(0x180D); // Custom BLE service
-BLECharacteristic bleCharacteristic = BLECharacteristic(0x2A37); // Custom BLE characteristic
+// -----------------------------------------------------------------------------
+// UUIDs (must match ESP32)
+// -----------------------------------------------------------------------------
+BLEService bleService("ABCD1234-0000-467A-9538-01F0652C74E0");
 
-// Function to read analog value and start advertising
-void startAdvertising() {
-  Bluefruit.Advertising.clearData(); // Clear current advertising data
-  Bluefruit.Advertising.addName();    // Add device name to advertisement
+BLECharacteristic bleCharacteristic(
+  "ABCD1234-0001-467A-9538-01F0652C74E0");
 
-  // Read the analog value from pin A0 (adjust pin as needed)
-  int analogValue = analogRead(A0);
+// 2-byte payload
+uint8_t data[2];
 
-  // Convert the analog value to a byte array (2 bytes for 16-bit value)
-  data[0] = analogValue & 0xFF;           // Lower byte
-  data[1] = (analogValue >> 8) & 0xFF;    // Upper byte
+// -----------------------------------------------------------------------------
+// Start advertising
+// -----------------------------------------------------------------------------
+void startAdvertising()
+{
+  Bluefruit.Advertising.stop();
+  Bluefruit.Advertising.clearData();
 
-  // --- Serial output: print analog reading and payload bytes ---
-  Serial.print("[t=");
-  Serial.print(millis());
-  Serial.print(" ms] Analog A0 = ");
-  Serial.print(analogValue);
-  Serial.print("  |  Adv payload bytes: 0x");
-  if (data[0] < 0x10) Serial.print('0');
-  Serial.print(data[0], HEX);
-  Serial.print(" 0x");
-  if (data[1] < 0x10) Serial.print('0');
-  Serial.println(data[1], HEX);
-  // -----------------------------------------------------------
+  Bluefruit.ScanResponse.clearData();
+  Bluefruit.ScanResponse.addName();
 
-  // Add the analog value to the advertisement data
-  Bluefruit.Advertising.addData(BLE_GAP_AD_TYPE_MANUFACTURER_SPECIFIC_DATA, data, sizeof(data));
+  Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+  Bluefruit.Advertising.addService(bleService);
 
-  // Configure advertising interval and timeout
-  Bluefruit.Advertising.setInterval(160, 160);  // Interval: 100ms
-  Bluefruit.Advertising.setFastTimeout(500);    // Timeout: 1 second
-  Bluefruit.Advertising.start(0);                 // Start advertising indefinitely
+  Bluefruit.Advertising.setInterval(160, 160);      // 100 ms
+  Bluefruit.Advertising.setFastTimeout(30);
+  Bluefruit.Advertising.restartOnDisconnect(true);
+  Bluefruit.Advertising.start(0);
+
+  Serial.println("Advertising...");
 }
 
-// Callback when a device connects
-void connect_callback(uint16_t conn_handle) {
+// -----------------------------------------------------------------------------
+// Connected
+// -----------------------------------------------------------------------------
+void connect_callback(uint16_t conn_handle)
+{
+  BLEConnection* connection = Bluefruit.Connection(conn_handle);
+
+  // Request lower latency
+  connection->requestConnectionParameter(6, 0, 200);
+
   Serial.print("[t=");
   Serial.print(millis());
-  Serial.print(" ms] Connected! Handle=");
+  Serial.print(" ms] Connected. Handle=");
   Serial.println(conn_handle);
-  // Send a notification with the current analog value encoded as ASCII for easy reading
-  int analogValue = analogRead(A0);
-  char notifBuf[16];
-  snprintf(notifBuf, sizeof(notifBuf), "A0=%d", analogValue);
-  Serial.print("  Notify sent: ");
-  Serial.println(notifBuf);
-  bleCharacteristic.notify(conn_handle, (uint8_t*)notifBuf, strlen(notifBuf));
 }
 
-// Callback when a device disconnects
-void disconnect_callback(uint16_t conn_handle, uint8_t reason) {
+// -----------------------------------------------------------------------------
+// Disconnected
+// -----------------------------------------------------------------------------
+void disconnect_callback(uint16_t conn_handle, uint8_t reason)
+{
   Serial.print("[t=");
   Serial.print(millis());
-  Serial.print(" ms] Disconnected. Handle=");
-  Serial.print(conn_handle);
-  Serial.print("  Reason=0x");
+  Serial.print(" ms] Disconnected. Reason=0x");
   Serial.println(reason, HEX);
-  Serial.println("  Restarting advertising...");
-  startAdvertising(); // Restart advertising
 }
 
-void setup() {
-  Serial.begin(115200);        // Initialize Serial for debugging
-  Bluefruit.begin();           // Initialize Bluefruit module
-  Bluefruit.setName("MyBLE"); // Set device name
-  Serial.println("Bluefruit Begin!!!");
-  // Set up the BLE service and characteristic
+// -----------------------------------------------------------------------------
+// Setup
+// -----------------------------------------------------------------------------
+void setup()
+{
+  Serial.begin(115200);
+
+  Bluefruit.begin();
+  Bluefruit.setTxPower(4);
+  Bluefruit.setName("MyBLE");
+
+  // Service
   bleService.begin();
-  bleCharacteristic.setProperties(CHR_PROPS_NOTIFY); // Enable notifications
-  bleCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS); // No read access
-  bleCharacteristic.setFixedLen(11);  // Set fixed length for notifications
+
+  // Characteristic
+  bleCharacteristic.setProperties(CHR_PROPS_NOTIFY);
+
+  bleCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+
+  bleCharacteristic.setFixedLen(2);
+
   bleCharacteristic.begin();
 
-  // Set connection and disconnection callbacks
   Bluefruit.Periph.setConnectCallback(connect_callback);
   Bluefruit.Periph.setDisconnectCallback(disconnect_callback);
 
-  startAdvertising(); // Start advertising
-  Serial.println("Advertising Begin!!!");
+  startAdvertising();
+
   Serial.println("------------------------------------");
-  Serial.println(" nRF BLE Piezo Advertiser Running");
-  Serial.println(" Device name : MyBLE");
-  Serial.println(" Interval    : 160 units (~100 ms)");
-  Serial.println(" Data pin    : A0");
+  Serial.println(" nRF BLE Analog Notifier");
+  Serial.println(" Device : MyBLE");
+  Serial.println(" Update : 100 ms");
   Serial.println("------------------------------------");
 }
 
-void loop() {
-  static unsigned long lastUpdate = 0;
-  unsigned long currentMillis = millis();
+// -----------------------------------------------------------------------------
+// Loop
+// -----------------------------------------------------------------------------
+void loop()
+{
+  static uint32_t lastUpdate = 0;
 
-  // Update advertisement payload every 100 ms and print to Serial
-  if (currentMillis - lastUpdate >= 100) {
-    lastUpdate = currentMillis;
-    startAdvertising();
+  if (millis() - lastUpdate >= 50)
+  {
+    lastUpdate = millis();
+
+    uint16_t analogValue = analogRead(A0);
+
+    data[0] = analogValue & 0xFF;
+    data[1] = analogValue >> 8;
+
+    // Send notification only if a client is connected
+    if (Bluefruit.connected())
+    {
+      bleCharacteristic.notify(data, sizeof(data));
+    }
+
+    // Debug output
+    Serial.print("[t=");
+    Serial.print(millis());
+    Serial.print(" ms] Analog A0 = ");
+    Serial.print(analogValue);
+
+    Serial.print(" | Notify bytes: 0x");
+
+    if (data[0] < 0x10) Serial.print('0');
+    Serial.print(data[0], HEX);
+
+    Serial.print(" 0x");
+
+    if (data[1] < 0x10) Serial.print('0');
+    Serial.println(data[1], HEX);
   }
 }

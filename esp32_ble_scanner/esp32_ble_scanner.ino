@@ -1,100 +1,202 @@
 ﻿#include <BLEDevice.h>
+#include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
+#include <BLERemoteCharacteristic.h>
 
-// == Configuration ============================================================
-static const char* TARGET_NAME   = "MyBLE"; // Must match Bluefruit.setName()
-static const int   SCAN_DURATION = 3;        // Seconds per scan session
-static const int   SCAN_INTERVAL = 100;      // Scan interval  (BLE units x 0.625 ms = 62.5 ms)
-static const int   SCAN_WINDOW   = 99;       // Scan window    (BLE units x 0.625 ms = 61.9 ms)
-// =============================================================================
+// -----------------------------------------------------------------------------
+// Configuration
+// -----------------------------------------------------------------------------
+static BLEUUID serviceUUID("ABCD1234-0000-467A-9538-01F0652C74E0");
+static BLEUUID charUUID("ABCD1234-0001-467A-9538-01F0652C74E0");
 
-BLEScan* pBLEScan = nullptr;
+static const char* TARGET_NAME = "MyBLE";
 
-/* Helper: pretty-print a raw byte buffer as "0xHH 0xHH ..." */
-void printHex(const uint8_t* buf, size_t len) {
-  for (size_t i = 0; i < len; i++) {
-    Serial.print("0x");
-    if (buf[i] < 0x10) Serial.print('0');
-    Serial.print(buf[i], HEX);
-    if (i < len - 1) Serial.print(' ');
-  }
+// -----------------------------------------------------------------------------
+// Globals
+// -----------------------------------------------------------------------------
+BLEAdvertisedDevice* myDevice = nullptr;
+BLERemoteCharacteristic* pRemoteCharacteristic = nullptr;
+
+bool doConnect = false;
+bool connected = false;
+
+// -----------------------------------------------------------------------------
+// Notification callback
+// -----------------------------------------------------------------------------
+void notifyCallback(
+    BLERemoteCharacteristic* pChar,
+    uint8_t* pData,
+    size_t length,
+    bool isNotify)
+{
+    // Serial.println("Notification received!");
+
+    if(length != 2)
+    {
+        Serial.print("Unexpected length: ");
+        Serial.println(length);
+        return;
+    }
+
+    uint16_t value =
+        pData[0] |
+        (pData[1] << 8);
+
+    Serial.print("Analog = ");
+    Serial.println(value);
 }
 
-/* BLE advertised-device callback - fires for every advertisement received */
-class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
-  void onResult(BLEAdvertisedDevice advertisedDevice) override {
+// -----------------------------------------------------------------------------
+// Client callbacks
+// -----------------------------------------------------------------------------
+class MyClientCallbacks : public BLEClientCallbacks
+{
+  void onConnect(BLEClient* client)
+  {
+    Serial.println("Connected to MyBLE!");
+  }
 
-    // Ignore everything except "MyBLE"
-    if (!advertisedDevice.haveName()) return;
-    if (advertisedDevice.getName() != TARGET_NAME) return;
-
-    // Read Manufacturer Specific Data
-    if (advertisedDevice.haveManufacturerData()) {
-
-      String mfrData = advertisedDevice.getManufacturerData();
-      const uint8_t* raw = (const uint8_t*)mfrData.c_str();
-      size_t rawLen = mfrData.length();
-
-      if (rawLen >= 2) {
-
-        uint16_t analogValue =
-            (uint16_t)raw[0] |
-            ((uint16_t)raw[1] << 8);
-
-        Serial.print("[t=");
-        Serial.print(millis());
-        Serial.print(" ms] Analog A0 = ");
-        Serial.print(analogValue);
-        Serial.print("  |  Adv payload bytes: 0x");
-
-        if (raw[0] < 0x10) Serial.print('0');
-        Serial.print(raw[0], HEX);
-
-        Serial.print(" 0x");
-
-        if (raw[1] < 0x10) Serial.print('0');
-        Serial.println(raw[1], HEX);
-      }
-    }
+  void onDisconnect(BLEClient* client)
+  {
+    connected = false;
+    Serial.println("Disconnected!");
+    Serial.println("Restarting scan...");
   }
 };
 
-/* setup */
-void setup() {
-  Serial.begin(115200);
-  delay(500);
+// -----------------------------------------------------------------------------
+// Scan callbacks
+// -----------------------------------------------------------------------------
+class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks
+{
+  void onResult(BLEAdvertisedDevice advertisedDevice)
+  {
+    if (!advertisedDevice.haveName())
+      return;
 
-  Serial.println();
-  Serial.println("============================================================");
-  Serial.println("  ESP32 BLE Scanner - looking for MyBLE piezo advertiser");
-  Serial.print  ("  Target name   : ");
-  Serial.println(TARGET_NAME);
-  Serial.print  ("  Scan duration : ");
-  Serial.print  (SCAN_DURATION);
-  Serial.println(" s per window");
-  Serial.print  ("  Scan interval : ");
-  Serial.print  (SCAN_INTERVAL * 0.625f, 1);
-  Serial.println(" ms");
-  Serial.print  ("  Scan window   : ");
-  Serial.print  (SCAN_WINDOW * 0.625f, 1);
-  Serial.println(" ms");
-  Serial.println("============================================================");
+    if (advertisedDevice.getName() != TARGET_NAME)
+      return;
 
-  BLEDevice::init("ESP32_Scanner");
+    Serial.println("Found MyBLE!");
 
-  pBLEScan = BLEDevice::getScan();
-  // wantDuplicates = true so we get a callback on EVERY advertisement, not just the first
-  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(), true);
-  pBLEScan->setActiveScan(true);    // Request scan-response packets too
-  pBLEScan->setInterval(SCAN_INTERVAL);
-  pBLEScan->setWindow(SCAN_WINDOW);
+    BLEDevice::getScan()->stop();
 
-  Serial.println("Scanning for MyBLE...");
+    myDevice = new BLEAdvertisedDevice(advertisedDevice);
+
+    doConnect = true;
+  }
+};
+
+// -----------------------------------------------------------------------------
+// Connect
+// -----------------------------------------------------------------------------
+bool connectToServer()
+{
+  BLEClient* pClient = BLEDevice::createClient();
+
+  pClient->setClientCallbacks(new MyClientCallbacks());
+
+  Serial.println("Connecting...");
+
+  if (!pClient->connect(myDevice))
+  {
+    Serial.println("Connection failed.");
+    return false;
+  }
+
+  Serial.println("Connected.");
+
+  BLERemoteService* pRemoteService =
+  pClient->getService(serviceUUID);
+
+  if (pRemoteService == nullptr)
+  {
+    Serial.println("Service not found.");
+    pClient->disconnect();
+    return false;
+  }
+
+  pRemoteCharacteristic =
+  pRemoteService->getCharacteristic(charUUID);
+
+  if (pRemoteCharacteristic == nullptr)
+  {
+    Serial.println("Characteristic not found.");
+    pClient->disconnect();
+    return false;
+  }
+
+  if (pRemoteCharacteristic->canNotify())
+  {
+    pRemoteCharacteristic->registerForNotify(notifyCallback);
+
+    Serial.println("Notifications enabled.");
+  }
+
+  connected = true;
+
+  return true;
 }
 
-/* loop */
-void loop() {
-  BLEScanResults* results = pBLEScan->start(SCAN_DURATION, false);
-  pBLEScan->clearResults();
+// -----------------------------------------------------------------------------
+// Setup
+// -----------------------------------------------------------------------------
+void setup()
+{
+  Serial.begin(115200);
+
+  Serial.println("--------------------------------------");
+  Serial.println("ESP32 BLE Analog Receiver");
+  Serial.println("--------------------------------------");
+
+  BLEDevice::init("");
+
+  BLEScan* pScan = BLEDevice::getScan();
+
+  pScan->setAdvertisedDeviceCallbacks(
+    new MyAdvertisedDeviceCallbacks());
+
+  pScan->setActiveScan(true);
+  pScan->setInterval(100);
+  pScan->setWindow(99);
+
+  pScan->start(0, false);
+
+  Serial.println("Scanning...");
+}
+
+// -----------------------------------------------------------------------------
+// Loop
+// -----------------------------------------------------------------------------
+void loop()
+{
+  if (doConnect)
+  {
+    doConnect = false;
+
+    if (connectToServer())
+    {
+      Serial.println("Ready.");
+    }
+    else
+    {
+      Serial.println("Retry scanning...");
+      BLEDevice::getScan()->start(0, false);
+    }
+  }
+
+  if (!connected)
+  {
+    static uint32_t lastRetry = 0;
+
+    if (millis() - lastRetry > 50) // 3000
+    {
+      lastRetry = millis();
+
+      BLEDevice::getScan()->start(0, false);
+    }
+  }
+
+  delay(10);
 }
