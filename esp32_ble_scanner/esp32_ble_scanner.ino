@@ -2,6 +2,12 @@
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEClient.h>
+#include <WiFi.h>
+#include <time.h>
+#include <sys/time.h>
+
+const char* ssid = "NCAIR IOT";
+const char* password = "Asim@123Tewari";
 
 BLEUUID serviceUUID("ABCD1234-0000-467A-9538-01F0652C74E0");
 BLEUUID charUUID("ABCD1234-0001-467A-9538-01F0652C74E0");
@@ -70,9 +76,11 @@ void notifyCallback(
         }
     }
 
+    String timestamp = getTimestamp();
+
     for (int i = 0; i < 10; i++)
     {
-        Serial.print(sampleIndex++);
+        Serial.print(timestamp);
         Serial.print(",");
         Serial.println(samples[i]);
     }
@@ -211,6 +219,64 @@ bool connectPeripheral()
 }
 
 //------------------------------------------------------------
+// WiFi + NTP
+//------------------------------------------------------------
+void setupTime()
+{
+    Serial.print("Connecting to WiFi");
+
+    WiFi.begin(ssid, password);
+
+    while (WiFi.status() != WL_CONNECTED)
+    {
+        delay(500);
+        Serial.print(".");
+    }
+
+    Serial.println("\nWiFi Connected");
+
+    // IST (UTC+5:30)
+    configTime(19800, 0, "pool.ntp.org", "time.nist.gov");
+
+    struct tm timeinfo;
+
+    Serial.print("Synchronizing time");
+
+    while (!getLocalTime(&timeinfo))
+    {
+        Serial.print(".");
+        delay(500);
+    }
+
+    Serial.println("\nTime synchronized");
+}
+
+String getTimestamp()
+{
+    struct tm timeinfo;
+
+    if (!getLocalTime(&timeinfo))
+        return "0000-00-00 00:00:00.000";
+
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+
+    char buffer[32];
+
+    sprintf(buffer,
+            "%04d-%02d-%02d %02d:%02d:%02d.%03ld",
+            timeinfo.tm_year + 1900,
+            timeinfo.tm_mon + 1,
+            timeinfo.tm_mday,
+            timeinfo.tm_hour,
+            timeinfo.tm_min,
+            timeinfo.tm_sec,
+            tv.tv_usec / 1000);
+
+    return String(buffer);
+}
+
+//------------------------------------------------------------
 // Setup
 //------------------------------------------------------------
 void setup()
@@ -222,6 +288,8 @@ void setup()
     Serial.println("Expected Payload : 20 Bytes");
     Serial.println("10 Samples / Packet");
     Serial.println("--------------------------------");
+
+    setupTime();
 
     BLEDevice::init("ESP32_Receiver");
     BLEDevice::setMTU(247);
