@@ -6,8 +6,8 @@
 #include <time.h>
 #include <sys/time.h>
 
-const char* ssid = "NCAIR IOT";
-const char* password = "Asim@123Tewari";
+const char* ssid = "YOUR_SSID";
+const char* password = "YOUR_PASSWORD";
 
 BLEUUID serviceUUID("ABCD1234-0000-467A-9538-01F0652C74E0");
 BLEUUID charUUID("ABCD1234-0001-467A-9538-01F0652C74E0");
