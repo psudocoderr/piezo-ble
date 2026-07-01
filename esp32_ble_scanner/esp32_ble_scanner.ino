@@ -5,9 +5,7 @@
 #include <WiFi.h>
 #include <time.h>
 #include <sys/time.h>
-
-const char* ssid = "YOUR_SSID";
-const char* password = "YOUR_PASSWORD";
+#include "secrets.h"
 
 BLEUUID serviceUUID("ABCD1234-0000-467A-9538-01F0652C74E0");
 BLEUUID charUUID("ABCD1234-0001-467A-9538-01F0652C74E0");
@@ -225,7 +223,7 @@ void setupTime()
 {
     Serial.print("Connecting to WiFi");
 
-    WiFi.begin(ssid, password);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
     while (WiFi.status() != WL_CONNECTED)
     {

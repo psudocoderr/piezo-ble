@@ -5,9 +5,7 @@
 // UUIDs (must match ESP32)
 // -----------------------------------------------------------------------------
 BLEService bleService("ABCD1234-0000-467A-9538-01F0652C74E0");
-
-BLECharacteristic bleCharacteristic(
-  "ABCD1234-0001-467A-9538-01F0652C74E0");
+BLECharacteristic bleCharacteristic("ABCD1234-0001-467A-9538-01F0652C74E0");
 
 // -----------------------------------------------------------------------------
 // Packet buffer
